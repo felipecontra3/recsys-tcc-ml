@@ -47,11 +47,11 @@ def findPosts(userId):
     user = findUserById(userId)
     for post in user['facebook']['posts']:
         if 'message' in post.keys():
-            posts.append((post['id_post'], post['message'], u'Post', u'Facebook'))
+            posts.append((post['id_post'], removeAccents(post['message']), u'Post', u'Facebook'))
     
     for post in user['twitter']:
         if 'text' in post.keys():
-            posts.append((post['id'], post['text'], u'Post', u'Twitter'))  
+            posts.append((post['id'], removeAccents(post['text']), u'Post', u'Twitter'))  
 
     return posts
 
@@ -232,9 +232,8 @@ def main(**kwargs):
     conf = SparkConf().setAppName(APP_NAME).setMaster("local").set("spark.executor.memory", "1g")
 
     sc = SparkContext(conf=conf)
-
-    for post in posts:
-        print post
+    #for post in posts:
+        #print post
 
     print 'Generating posts RDD'
     postsRDD = sc.parallelize(posts)
@@ -253,9 +252,6 @@ def main(**kwargs):
                            .map(lambda s: (s[0], [x for x in s[1] if x in tokens], s[2], s[3]))
                            .filter(lambda x: len(x[1]) >= 20 or x[2] == u'Post')
                            .cache())
-
-    print corpusRDD.take(1)
-    sys.exit(0)
 
     #corpusRDD = productAndPostRDD.map(lambda s: (s[0], word_tokenize(s[1].lower()), s[2], s[3])).map(lambda s: (s[0], [PorterStemmer().stem(x) for x in s[1] if x not in stpwrds], s[2], s[3] )).map(lambda s: (s[0], [x[0] for x in pos_tag(s[1]) if x[1] == 'NN' or x[1] == 'NNP'], s[2], s[3])).cache()
     print 'Generating idfsRDD'
@@ -279,17 +275,14 @@ def main(**kwargs):
     modelNaiveBayesSubcategory = classifier.getModel('/dados/models/naivebayes/subcategory_new')
     postsSpaceVectorRDD = classifier.createVectSpacePost(tfidfPostsRDD, tokens)
     
-    print postsSpaceVectorRDD.collect()
-    sys.exit(0)
+
     predictions = postsSpaceVectorRDD.map(lambda p: (modelNaiveBayesSubcategory.predict(p[1]), p[0])).groupByKey().mapValues(list).collect()
-    
+
     #classifier = Classifier(sc, 'DecisionTree')
     #modelDecisionTree = classifier.getModel('/dados/models/dt/category_new')
     #postsSpaceVectorRDD = classifier.createVectSpacePost(tfidfPostsRDD, tokens)
     #predictions = modelDecisionTree.predict(postsSpaceVectorRDD.map(lambda x: x)).collect()
-    print predictions
 
-    sys.exit(0)
     for prediction in predictions:
         print '=================================> PREDICTION {}'.format(prediction)
         category_to_use = categoryAndSubcategory[int(prediction[0])][0]
@@ -323,7 +316,7 @@ def main(**kwargs):
                         .collect())
 
         if len(suggestions) > 0:
-            insertSuggestions(suggestions, iduser, productRDD)
+            insertSuggestions(suggestions, iduser)
         
     user['statusRecomendacao'] = u'F'
     updateUser(user)
@@ -332,19 +325,24 @@ def main(**kwargs):
     print 'it tooks %d seconds' % elap
 
 
-def insertSuggestions(suggestions_list, iduser, productRDD):
-    suggestions_to_insert = []
-    for post in suggestions_list:
+def insertSuggestions(suggestions, iduser):   
+    
+    recomendations = dict()
+    recomendations['recomendacoes'] = []
+
+    for post in suggestions:
+        print len(post)
         if len(post) > 0:
             suggestions_dict = dict()
             product_dict = dict()
-            suggestions_dict['userId'] = iduser
-            suggestions_dict['postId'] = post[0]
-            suggestions_dict['post'] = post[1][0][1]
+
             suggestions_dict['resource'] = post[1][1]
+            suggestions_dict['postId'] = post[0]
+            suggestions_dict['post'] = post[1][0][1]          
+
             post[1][0][0].sort(key=lambda x: -x[1])
+
             if len(post[1][0][0]) > 0:
-                suggestions_dict['suggestions'] = []
                 maxCosine = max([x[1] for x in post[1][0][0][:numMaxSuggestionsPerPost]])
                 minCosine = 0
                 lenInterval = (maxCosine - minCosine)/numStarts
@@ -357,9 +355,12 @@ def insertSuggestions(suggestions_list, iduser, productRDD):
                         prod['cosineSimilarity'] = product[1]
                         prod['rate'] = (product[1]-minCosine)/lenInterval
                         suggestions_dict['products'].append(prod)
-            suggestions_to_insert.append(suggestions_dict)
+
+            recomendations['recomendacoes'].append(suggestions_dict)
+
     db = createMongoDBConnection(host, port, username, password, database)
-    db.recomendacao.insert_many(suggestions_to_insert)
+    db.users.update_one({"_id": ObjectId(iduser)}, {"$set" : recomendations})
+    sys.exit(0)
     return True
 
 if __name__ == '__main__':

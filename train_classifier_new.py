@@ -143,7 +143,7 @@ def main(sc):
 
     start = timer()
 
-    categs = ["Computers & Tablets", "Video Games", "TV & Home Theater"]# , "Musical Instruments"]
+    #categs = [" Livros", " Video Games", " TV & Home Theater"]# , "Musical Instruments"]
 
     stpwrds = stopwords.words('english')
     tbl_translate = dict.fromkeys(i for i in xrange(sys.maxunicode) if unicodedata.category(unichr(i)).startswith('S') or unicodedata.category(unichr(i)).startswith('P') or unicodedata.category(unichr(i)).startswith('N'))
