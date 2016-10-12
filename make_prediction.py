@@ -50,7 +50,9 @@ def findPosts(user):
 
 def findProductById(prodId):
     db = createMongoDBConnection(host, port, username, password, database)
-    return db.produto.find_one({'_id': ObjectId(prodId)})   
+    prod = db.produto.find_one({'_id': ObjectId(prodId)})
+    prod['idprod'] = str(prod['_id'])
+    return prod
 
 def updateUser(user):
     db = createMongoDBConnection(host, port, username, password, database)
