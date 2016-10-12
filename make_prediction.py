@@ -126,11 +126,94 @@ def cossine(v1, v2):
     else:
         return 0
 
+
+
+def main(sc, sqlContext):
+
+    #print '---Pegando usuario, posts, tokens e categorias do MongoDB---'
+    start_i = timer()
+    user = findUserById(iduser)
+    posts = findPosts(user) 
+    
+    tokens, category, categoryAndSubcategory = getTokensAndCategories()
+    postsRDD = (sc.parallelize(posts).map(lambda s: (s[0], word_tokenize(s[1].lower()), s[2], s[3]))
+                    .map(lambda p: (p[0], [x for x in p[1] if x in tokens] ,p[2], p[3]))
+                    .cache())
+
+    #print '####levou %d segundos' % (timer() - start_i)
+
+    #print '---Pegando produtos do MongoDB---'
+    start_i = timer()
+
+    #print '####levou %d segundos' % (timer() - start_i)
+    
+    #print '---Criando corpusRDD---'
+    start_i = timer()
+    stpwrds = stopwords.words('portuguese')
+    corpusRDD = (postsRDD.map(lambda s: (s[0], [PorterStemmer().stem(x) for x in s[1] if x not in stpwrds], s[2], s[3]))
+                         .filter(lambda x: len(x[1]) >= 20 or (x[2] == u'Post' and len(x[1])>0))
+                         .cache())
+
+    #print '####levou %d segundos' % (timer() - start_i)
+
+    #print '---Calculando TF-IDF---'
+    start_i = timer()
+    wordsData = corpusRDD.map(lambda s: Row(label=int(s[0]), words=s[1], type=s[2]))
+    
+    wordsDataDF = sqlContext.createDataFrame(wordsData).unionAll(sqlContext.read.parquet("/home/felipe/Documentos/TCC/Experimento/spark_cluster/spark-1.6.2-bin-hadoop2.6/wordsDataDF.parquet"))
+
+    numTokens = len(tokens)
+    hashingTF = HashingTF(inputCol="words", outputCol="rawFeatures", numFeatures=numTokens)
+    idf = IDF(inputCol="rawFeatures", outputCol="features")
+
+    featurizedData = hashingTF.transform(wordsDataDF)
+
+    idfModel = idf.fit(featurizedData)
+    tfIDF = idfModel.transform(featurizedData).cache()
+
+    postTFIDF = tfIDF.filter(tfIDF.type==u'Post').cache()
+
+    #print '####levou %d segundos' % (timer() - start_i)
+
+    #print '---Carregando modelo---'
+    start_i = timer()
+    model = NaiveBayesModel.load(sc, '/dados/models/naivebayes/modelo_categoria')
+    #print '####levou %d segundos' % (timer() - start_i)
+
+    #print '---Usando o modelo---'
+    start_i = timer()
+    predictions = postTFIDF.map(lambda p: ( model.predict(p.features), p[0])).groupByKey().mapValues(list).collect()    
+    #print '####levou %d segundos' % (timer() - start_i)
+
+    #print '---Calculando similaridades---'
+    start_i = timer()
+    suggestions = []
+
+    for prediction in predictions:
+        category_to_use = category[int(prediction[0])]
+        #print ' Calculando similaridades para a categoria: {}'.format(category_to_use)
+        tf = tfIDF.filter(tfIDF.type==category_to_use).cache()
+        for post in prediction[1]:
+            postVector = postTFIDF.filter(postTFIDF.label == post).map(lambda x: x.features).collect()[0]
+            sim = (tf
+                    .map(lambda x: (post, x.label, cossine(x.features, postVector)))
+                    .filter(lambda x: x[2]>=threshold)
+                    .collect())
+            if len(sim) > 0:
+                suggestions.append(sim)
+
+    #print '####levou %d segundos' % (timer() - start_i)
+
+    if len(suggestions) > 0:
+        #print '---Inserindo recomendacoes no MongoDB---'
+        start_i = timer()
+        insertSuggestions(suggestions, iduser, posts)
+        #print '####levou %d segundos' % (timer() - start_i)
+
 if __name__ == '__main__':
 
-
     APP_NAME = 'Recomender System - Calculo de recomendacao'
-    threshold  = 0.02
+    threshold  = 0.002
     #numMaxSuggestionsPerPost = 5
     numStarts = 5
 
@@ -146,120 +229,4 @@ if __name__ == '__main__':
     sc = SparkContext(appName=APP_NAME)
     sqlContext = SQLContext(sc)
 
-    print '---Pegando usuario, posts, tokens e categorias do MongoDB---'
-    start_i = timer()
-    user = findUserById(iduser)
-    posts = findPosts(user) 
-    
-    tokens, category, categoryAndSubcategory = getTokensAndCategories()
-    postsRDD = (sc.parallelize(posts).map(lambda s: (s[0], word_tokenize(s[1].lower()), s[2], s[3]))
-                    .map(lambda p: (p[0], [x for x in p[1] if x in tokens] ,p[2], p[3]))
-                    .cache())
-
-    print '####levou %d segundos' % (timer() - start_i)
-
-    print '---Pegando produtos do MongoDB---'
-    start_i = timer()
-
-    print '####levou %d segundos' % (timer() - start_i)
-    
-    print '---Criando corpusRDD---'
-    start_i = timer()
-    stpwrds = stopwords.words('portuguese')
-    corpusRDD = (postsRDD.map(lambda s: (s[0], [PorterStemmer().stem(x) for x in s[1] if x not in stpwrds], s[2], s[3]))
-                         .filter(lambda x: len(x[1]) >= 20 or (x[2] == u'Post' and len(x[1])>0))
-                         .cache())
-
-    print '####levou %d segundos' % (timer() - start_i)
-
-    print '---Calculando TF-IDF---'
-    start_i = timer()
-    wordsData = corpusRDD.map(lambda s: Row(label=int(s[0]), words=s[1], type=s[2]))
-    
-    #print wordsData.collect()
-    #sys.exit(0)
-
-    #"wordsDataDF.parquet" foi criado no treinamento
-    wordsDataDF = sqlContext.createDataFrame(wordsData).unionAll(sqlContext.read.parquet("/home/felipe/Documentos/TCC/Experimento/spark_cluster/spark-1.6.2-bin-hadoop2.6/wordsDataDF.parquet"))
-
-    numTokens = len(tokens)
-    hashingTF = HashingTF(inputCol="words", outputCol="rawFeatures", numFeatures=numTokens)
-    idf = IDF(inputCol="rawFeatures", outputCol="features")
-
-    featurizedData = hashingTF.transform(wordsDataDF)
-
-    idfModel = idf.fit(featurizedData)
-    tfIDF = idfModel.transform(featurizedData).cache()
-
-    postTFIDF = tfIDF.filter(tfIDF.type==u'Post').cache()
-
-    print '####levou %d segundos' % (timer() - start_i)
-
-    print '---Carregando modelo---'
-    start_i = timer()
-    model = NaiveBayesModel.load(sc, '/dados/models/naivebayes/modelo_categoria')
-    print '####levou %d segundos' % (timer() - start_i)
-
-    print '---Usando o modelo---'
-    start_i = timer()
-    predictions = postTFIDF.map(lambda p: ( model.predict(p.features), p[0])).groupByKey().mapValues(list).collect()    
-    print '####levou %d segundos' % (timer() - start_i)
-
-    print '---Calculando similaridades---'
-    start_i = timer()
-    suggestions = []
-
-    for prediction in predictions:
-        category_to_use = category[int(prediction[0])]
-        print ' Calculando similaridades para a categoria: {}'.format(category_to_use)
-        tf = tfIDF.filter(tfIDF.type==category_to_use).cache()
-        for post in prediction[1]:
-            postVector = postTFIDF.filter(postTFIDF.label == post).map(lambda x: x.features).collect()[0]
-            sim = (tf
-                    .map(lambda x: (post, x.label, cossine(x.features, postVector)))
-                    .filter(lambda x: x[2]>=threshold)
-                    .collect())
-            if len(sim) > 0:
-                suggestions.append(sim)
-
-    print '####levou %d segundos' % (timer() - start_i)
-
-    if len(suggestions) > 0:
-        print '---Inserindo recomendacoes no MongoDB---'
-        start_i = timer()
-        insertSuggestions(suggestions, iduser, posts)
-        print '####levou %d segundos' % (timer() - start_i)
-
-    print 'O processo todo levou %d segundos' % (timer()-start)
-        #tfidfProductsCategoryRDD = tfidfRDD.filter(lambda x: x[2]==category_to_use).cache()
-        #tfidfProductsCategoryBroadcast = sc.broadcast(tfidfProductsCategoryRDD.map(lambda x: (x[0], x[1])).collectAsMap())
-
-        #corpusInvPairsProductsRDD = tfidfProductsCategoryRDD.flatMap(lambda r: ([(x, r[0]) for x in r[1]])).cache()
-        #corpusInvPairsPostsRDD = tfidfPostsRDD.flatMap(lambda r: ([(x, r[0]) for x in r[1]])).filter(lambda x: x[1] in prediction[1]).cache()
-        #commonTokens = (corpusInvPairsProductsRDD.join(corpusInvPairsPostsRDD)
-                                                 #.map(lambda x: (x[1], x[0]))
-                                                 #.groupByKey()
-                                                 #.cache())
-
-        #corpusProductsNormsRDD = tfidfProductsCategoryRDD.map(lambda x: (x[0], norm(x[1]))).cache()
-        #corpusProductsNormsBroadcast = sc.broadcast(corpusProductsNormsRDD.collectAsMap())
-
-        #print '### PREDICTION Similarities RDD'
-        #similaritiesRDD =  (commonTokens
-                            #.map(lambda x: cosineSimilarity(x, tfidfProductsCategoryBroadcast.value, tfidfPostsBroadcast.value, corpusProductsNormsBroadcast.value, corpusPostsNormsBroadcast.value))
-                            #.cache())
-
-        #suggestions = (similaritiesRDD
-                        #.map(lambda x: (x[0][1], (x[0][0], x[1])))
-                        #.filter(lambda x: x[1][1]>threshold)
-                        #.groupByKey()
-                        #.mapValues(list)
-                        #.join(postsRDD)
-                        #.join(postsRDD.map(lambda x: (x[0], x[3])))
-                        #.collect())
-
-        #if len(suggestions) > 0:
-            #insertSuggestions(suggestions, iduser)
-        
-    #user['statusRecomendacao'] = u'F'
-    #updateUser(user)    
+    main(sc, sqlContext)
