@@ -106,19 +106,8 @@ def insertTokensAndCategories(tokens, category, categoryAndSubcategory):
 
     modelCollection.insert_one(document_mongo)
 
-if __name__ == "__main__":
 
-    host = 'localhost'
-    port = 27017
-    username = ''
-    password = ''
-    database = 'tcc-recsys-mongo'
-
-    APP_NAME = 'Recomender System - Treinamento dos Modelos'
-
-    sc = SparkContext(appName=APP_NAME)
-    sqlContext = SQLContext(sc)
-
+def main(sc, sqlContext):
     start = timer()
 
     stpwrds = stopwords.words('english')
@@ -247,4 +236,21 @@ if __name__ == "__main__":
     print '####levou %d segundos' % (timer()-start_i)   
 
     print 'O processo todo levou %d segundos' % (timer()-start)
+    
+
+if __name__ == "__main__":
+
+    host = 'localhost'
+    port = 27017
+    username = ''
+    password = ''
+    database = 'tcc-recsys-mongo'
+
+    APP_NAME = 'Recomender System - Treinamento dos Modelos'
+
+    sc = SparkContext(appName=APP_NAME)
+    sqlContext = SQLContext(sc)
+
+
+    main(sc, sqlContext)
     sc.stop()

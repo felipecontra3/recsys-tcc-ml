@@ -133,6 +133,8 @@ def cossine(v1, v2):
 
 def main(sc, sqlContext):
 
+    #start = timer()
+
     #print '---Pegando usuario, posts, tokens e categorias do MongoDB---'
     #start_i = timer()
     user = findUserById(iduser)
@@ -240,11 +242,11 @@ if __name__ == '__main__':
     username = ''
     password = ''
     database = 'tcc-recsys-mongo'
-
-    start = timer()
+    
     iduser = sys.argv[1]
 
     sc = SparkContext(appName=APP_NAME)
     sqlContext = SQLContext(sc)
 
     main(sc, sqlContext)
+    sc.stop()
