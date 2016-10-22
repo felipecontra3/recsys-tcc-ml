@@ -19,6 +19,7 @@ from pyspark.sql import Row, SQLContext
 from pyspark.sql.functions import col
 
 from pyspark.mllib.classification import NaiveBayes, NaiveBayesModel
+from pyspark.mllib.classification import SVMWithSGD, SVMModel
 
 def removeAccents(s):
   s = ''.join((c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn'))
@@ -133,7 +134,7 @@ def cossine(v1, v2):
 def main(sc, sqlContext):
 
     #print '---Pegando usuario, posts, tokens e categorias do MongoDB---'
-    start_i = timer()
+    #start_i = timer()
     user = findUserById(iduser)
     posts = findPosts(user) 
     
@@ -142,15 +143,17 @@ def main(sc, sqlContext):
                     .map(lambda p: (p[0], [x for x in p[1] if x in tokens] ,p[2], p[3]))
                     .cache())
 
+    
+
     #print '####levou %d segundos' % (timer() - start_i)
 
     #print '---Pegando produtos do MongoDB---'
-    start_i = timer()
+    #start_i = timer()
 
     #print '####levou %d segundos' % (timer() - start_i)
     
     #print '---Criando corpusRDD---'
-    start_i = timer()
+    #start_i = timer()
     stpwrds = stopwords.words('portuguese')
     corpusRDD = (postsRDD.map(lambda s: (s[0], [PorterStemmer().stem(x) for x in s[1] if x not in stpwrds], s[2], s[3]))
                          .filter(lambda x: len(x[1]) >= 20 or (x[2] == u'Post' and len(x[1])>0))
@@ -159,7 +162,7 @@ def main(sc, sqlContext):
     #print '####levou %d segundos' % (timer() - start_i)
 
     #print '---Calculando TF-IDF---'
-    start_i = timer()
+    #start_i = timer()
     wordsData = corpusRDD.map(lambda s: Row(label=int(s[0]), words=s[1], type=s[2]))
     
     wordsDataDF = sqlContext.createDataFrame(wordsData).unionAll(sqlContext.read.parquet("/home/felipe/Documentos/TCC/Experimento/spark_cluster/spark-1.6.2-bin-hadoop2.6/wordsDataDF.parquet"))
@@ -173,22 +176,35 @@ def main(sc, sqlContext):
     idfModel = idf.fit(featurizedData)
     tfIDF = idfModel.transform(featurizedData).cache()
 
-    postTFIDF = tfIDF.filter(tfIDF.type==u'Post').cache()
+    
+    
+    postTFIDF = (tfIDF
+                    .filter(tfIDF.type==u'Post')
+                    #.map(lambda s: Row(label=s[0], type=s[1], words=s[2], rawFeatures=s[3], features=s[4], sentiment=SVM.predict(s[4])))
+                    .cache())
 
+    #postTFIDF = postTFIDF.filter(lambda p: p.sentiment == 1)
     #print '####levou %d segundos' % (timer() - start_i)
 
     #print '---Carregando modelo---'
-    start_i = timer()
-    model = NaiveBayesModel.load(sc, '/dados/models/naivebayes/modelo_categoria')
+    #start_i = timer()
+    NB = NaiveBayesModel.load(sc, '/dados/models/naivebayes/modelo_categoria')
+    SVM = SVMModel.load(sc, "/dados/models/svm")
     #print '####levou %d segundos' % (timer() - start_i)
 
     #print '---Usando o modelo---'
-    start_i = timer()
-    predictions = postTFIDF.map(lambda p: ( model.predict(p.features), p[0])).groupByKey().mapValues(list).collect()    
+    #start_i = timer()
+    predictions = (postTFIDF
+                        .map(lambda p: (NB.predict(p.features), p[0], SVM.predict(p.features)))
+                        #.filter(lambda p: p[2]==1)
+                        .map(lambda p: (p[0], p[1]))
+                        .groupByKey()
+                        .mapValues(list)
+                        .collect())
     #print '####levou %d segundos' % (timer() - start_i)
 
     #print '---Calculando similaridades---'
-    start_i = timer()
+    #start_i = timer()
     suggestions = []
 
     for prediction in predictions:
@@ -208,7 +224,7 @@ def main(sc, sqlContext):
 
     if len(suggestions) > 0:
         #print '---Inserindo recomendacoes no MongoDB---'
-        start_i = timer()
+        #start_i = timer()
         insertSuggestions(suggestions, iduser, posts)
         #print '####levou %d segundos' % (timer() - start_i)
 
