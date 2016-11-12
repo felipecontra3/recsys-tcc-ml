@@ -7,6 +7,7 @@ from nltk.stem.porter import *
 from nltk.stem import RSLPStemmer
 from nltk.corpus import stopwords
 from pymongo import MongoClient
+from openpyxl import load_workbook
 
 from pyspark import SparkContext
 
@@ -37,7 +38,7 @@ def removeAccents(s):
 def findProductsByCategory(categories):
     
     db = createMongoDBConnection(host, port, username, password, database)
-    produtos = db.produto
+    produtos = db.produto_novo
     
     product_list = []
     query_filter = {}
@@ -45,24 +46,33 @@ def findProductsByCategory(categories):
       query_filter = {"categorias" : {"$in" : categories}}
     
     for produto in produtos.find(query_filter):
-      keys = produto.keys()
-      description = ''
-      if 'descricaoLonga' in keys:
-          description = removeAccents(description + produto['descricaoLonga'])
-      if 'nome' in keys:
-          description = removeAccents(description + produto ['nome'])
-      id = None
-      if '_id' in keys:
-          id = str(produto['_id'])
-      
-      category = ''
-      subcategory = ''
-      if 'categorias' in keys:
-          category = removeAccents(produto['categorias'][0])
-          if(len(produto['categorias']) > 1):
-              subcategory = removeAccents(produto['categorias'][1])
-          
-      product_list.append((id, description, category, subcategory))
+        keys = produto.keys()
+        description = ''
+        if 'descricaoLonga' in keys:
+            description = removeAccents(description + produto['descricaoLonga'])
+        if 'nome' in keys:
+            description = removeAccents(description + produto ['nome'])
+        id = None
+        if '_id' in keys:
+            id = str(produto['_id'])
+
+        category = ''
+        subcategory = ''
+
+        if 'categorias' in keys:
+            categorias_0 = removeAccents(produto['categorias'][0])
+
+            if categorias_0 == "Inicio":            
+                category = removeAccents(produto['categorias'][1])
+                if(len(produto['categorias']) > 2):
+                    subcategory = removeAccents(produto['categorias'][2])
+            else:
+                category = categorias_0
+                if(len(produto['categorias']) > 1):
+                    subcategory = removeAccents(produto['categorias'][1])
+
+        if len(description)>0:
+            product_list.append((id, description, category, subcategory))
     
     return product_list
 
@@ -151,7 +161,6 @@ def main(sc, sqlContext):
 
     wordsDataForPredictionDF.write.parquet("wordsDataDF.parquet") 
 
-
     hashingTF = HashingTF(inputCol="words", outputCol="rawFeatures", numFeatures=numTokens)
     idf = IDF(inputCol="rawFeatures", outputCol="features")
 
@@ -184,11 +193,21 @@ def main(sc, sqlContext):
     print '####levou %d segundos' % (timer()-start_i)    
     
     print '---Pegando os posts---'
+
     start_i = timer()
-    posts = [(u'teste de post 1', 1),
-             (u'teste de post 2', 0),
-             (u'teste de post 3', 0),
-             (u'teste de post 4', 1)]
+    posts = list()
+    wb = load_workbook(filename = '/home/felipe/Documentos/TCC/Experimento/ml_module/base_sentimentos.xlsx')
+    sheet = wb['Menes']
+    for row in sheet.iter_rows(row_offset=1):
+        post = list()
+        for cell in row:
+            if cell.value is None:
+                break
+            post.append(1 if cell.value == 'Positive' or cell.value == 'Neutral' else 0 if cell.value == 'Negative' else removeAccents(cell.value))
+
+        if len(post) > 0:            
+            posts.append(tuple(post))
+
     print '####levou %d segundos' % (timer()-start_i)
 
     print '---Criando corpus---'

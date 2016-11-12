@@ -51,7 +51,7 @@ def findPosts(user):
 
 def findProductById(prodId):
     db = createMongoDBConnection(host, port, username, password, database)
-    prod = db.produto.find_one({'_id': ObjectId(prodId)})
+    prod = db.produto_novo.find_one({'_id': ObjectId(prodId)})
     prod['idprod'] = str(prod['_id'])
     return prod
 
@@ -96,7 +96,6 @@ def getTokensAndCategories():
 def insertSuggestions(suggestions, iduser, posts):   
     recomendations = dict()
     recomendations['recomendacoes'] = []    
-
     for post in suggestions:
 
         suggestions_dict = dict()
@@ -129,8 +128,6 @@ def cossine(v1, v2):
     else:
         return 0
 
-
-
 def main(sc, sqlContext):
 
     #start = timer()
@@ -160,7 +157,6 @@ def main(sc, sqlContext):
     corpusRDD = (postsRDD.map(lambda s: (s[0], [PorterStemmer().stem(x) for x in s[1] if x not in stpwrds], s[2], s[3]))
                          .filter(lambda x: len(x[1]) >= 20 or (x[2] == u'Post' and len(x[1])>0))
                          .cache())
-
     #print '####levou %d segundos' % (timer() - start_i)
 
     #print '---Calculando TF-IDF---'
@@ -178,8 +174,6 @@ def main(sc, sqlContext):
     idfModel = idf.fit(featurizedData)
     tfIDF = idfModel.transform(featurizedData).cache()
 
-    
-    
     postTFIDF = (tfIDF
                     .filter(tfIDF.type==u'Post')
                     #.map(lambda s: Row(label=s[0], type=s[1], words=s[2], rawFeatures=s[3], features=s[4], sentiment=SVM.predict(s[4])))
@@ -198,13 +192,13 @@ def main(sc, sqlContext):
     #start_i = timer()
     predictions = (postTFIDF
                         .map(lambda p: (NB.predict(p.features), p[0], SVM.predict(p.features)))
-                        #.filter(lambda p: p[2]==1)
+                        .filter(lambda p: p[2]==1)
                         .map(lambda p: (p[0], p[1]))
                         .groupByKey()
                         .mapValues(list)
                         .collect())
-    #print '####levou %d segundos' % (timer() - start_i)
 
+    #print '####levou %d segundos' % (timer() - start_i)
     #print '---Calculando similaridades---'
     #start_i = timer()
     suggestions = []
@@ -233,7 +227,7 @@ def main(sc, sqlContext):
 if __name__ == '__main__':
 
     APP_NAME = 'Recomender System - Calculo de recomendacao'
-    threshold  = 0.002
+    threshold  = 0.0002
     #numMaxSuggestionsPerPost = 5
     numStarts = 5
 
