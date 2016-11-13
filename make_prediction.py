@@ -163,7 +163,7 @@ def main(sc, sqlContext):
     #start_i = timer()
     wordsData = corpusRDD.map(lambda s: Row(label=int(s[0]), words=s[1], type=s[2]))
     
-    wordsDataDF = sqlContext.createDataFrame(wordsData).unionAll(sqlContext.read.parquet("/home/felipe/Documentos/TCC/Experimento/spark_cluster/spark-1.6.2-bin-hadoop2.6/wordsDataDF.parquet"))
+    wordsDataDF = sqlContext.createDataFrame(wordsData).unionAll(sqlContext.read.parquet("/home/ubuntu/recsys-tcc-ml/parquet/wordsDataDF.parquet"))
 
     numTokens = len(tokens)
     hashingTF = HashingTF(inputCol="words", outputCol="rawFeatures", numFeatures=numTokens)
@@ -184,8 +184,8 @@ def main(sc, sqlContext):
 
     #print '---Carregando modelo---'
     #start_i = timer()
-    NB = NaiveBayesModel.load(sc, '/dados/models/naivebayes/modelo_categoria')
-    SVM = SVMModel.load(sc, "/dados/models/svm")
+    NB = NaiveBayesModel.load(sc, '/home/ubuntu/recsys-tcc-ml/models/naivebayes/modelo_categoria')
+    SVM = SVMModel.load(sc, "/home/ubuntu/recsys-tcc-ml/models/svm")
     #print '####levou %d segundos' % (timer() - start_i)
 
     #print '---Usando o modelo---'

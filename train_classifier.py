@@ -156,10 +156,10 @@ def main(sc, sqlContext):
     #persistir isso para que ele nao tenha que fazer de novo na predicaoo
     wordsDataForPredictionDF = sqlContext.createDataFrame(wordsDataForPrediction)   
 
-    if os.path.exists("wordsDataDF.parquet"):
-        shutil.rmtree("wordsDataDF.parquet")
+    if os.path.exists("/home/ubuntu/recsys-tcc-ml/parquet/wordsDataDF.parquet"):
+        shutil.rmtree("/home/ubuntu/recsys-tcc-ml/parquet/wordsDataDF.parquet")
 
-    wordsDataForPredictionDF.write.parquet("wordsDataDF.parquet") 
+    wordsDataForPredictionDF.write.parquet("/home/ubuntu/recsys-tcc-ml/parquet/wordsDataDF.parquet") 
 
     hashingTF = HashingTF(inputCol="words", outputCol="rawFeatures", numFeatures=numTokens)
     idf = IDF(inputCol="rawFeatures", outputCol="features")
@@ -179,10 +179,10 @@ def main(sc, sqlContext):
     start_i = timer()
     model = NaiveBayes.train(VSMTrain)
 
-    if os.path.exists("/dados/models/naivebayes/modelo_categoria"):
-        shutil.rmtree("/dados/models/naivebayes/modelo_categoria")
+    if os.path.exists("/home/ubuntu/recsys-tcc-ml/models/naivebayes/modelo_categoria"):
+        shutil.rmtree("/home/ubuntu/recsys-tcc-ml/models/naivebayes/modelo_categoria")
 
-    model.save(sc, '/dados/models/naivebayes/modelo_categoria')
+    model.save(sc, '/home/ubuntu/recsys-tcc-ml/models/naivebayes/modelo_categoria')
     print '####levou %d segundos' % (timer()-start_i)    
 
     print '---Testando modelo Naive Bayes---'
@@ -196,7 +196,7 @@ def main(sc, sqlContext):
 
     start_i = timer()
     posts = list()
-    wb = load_workbook(filename = '/home/felipe/Documentos/TCC/Experimento/ml_module/base_sentimentos.xlsx')
+    wb = load_workbook(filename = '/home/ubuntu/recsys-tcc-ml/base_sentimentos.xlsx')
     sheet = wb['Menes']
     for row in sheet.iter_rows(row_offset=1):
         post = list()
@@ -240,10 +240,10 @@ def main(sc, sqlContext):
     start_i = timer()
     model = SVMWithSGD.train(VSMTrain, iterations=100)
     
-    if os.path.exists("/dados/models/svm"):
-        shutil.rmtree("/dados/models/svm")
+    if os.path.exists("/home/ubuntu/recsys-tcc-ml/models/svm"):
+        shutil.rmtree("/home/ubuntu/recsys-tcc-ml/models/svm")
 
-    model.save(sc, "/dados/models/svm")
+    model.save(sc, "/home/ubuntu/recsys-tcc-ml/models/svm")
 
     print '---Testando modelo SVM---'
     start_i = timer()
