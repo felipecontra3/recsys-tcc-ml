@@ -8,7 +8,7 @@ from nltk.corpus import stopwords
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 from pyspark import SparkConf, SparkContext
-from langdetect import detect
+#from langdetect import detect
 #from base import *
 # encoding=utf8  
 
