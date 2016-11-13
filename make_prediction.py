@@ -1,4 +1,4 @@
-import sys, os, math, re, unicodedata, click
+import sys, os, math, re, unicodedata
 from timeit import default_timer as timer
 from nltk.tag import pos_tag 
 from nltk import word_tokenize
