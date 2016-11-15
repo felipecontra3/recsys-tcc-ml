@@ -162,8 +162,7 @@ def main(sc, sqlContext):
     #print '---Calculando TF-IDF---'
     #start_i = timer()
     wordsData = corpusRDD.map(lambda s: Row(label=int(s[0]), words=s[1], type=s[2]))
-    if wordsData.count() > 0:
-        wordsDataDF = sqlContext.createDataFrame(wordsData).unionAll(sqlContext.read.parquet("/home/ubuntu/recsys-tcc-ml/parquet/wordsDataDF.parquet"))
+    wordsDataDF = sqlContext.createDataFrame(wordsData).unionAll(sqlContext.read.parquet("/home/ubuntu/recsys-tcc-ml/parquet/wordsDataDF.parquet"))
 
 
     numTokens = len(tokens)
