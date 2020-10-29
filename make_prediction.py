@@ -1,4 +1,4 @@
-import sys, os, math, re, unicodedata, click
+import sys, os, math, re, unicodedata
 from timeit import default_timer as timer
 from nltk.tag import pos_tag 
 from nltk import word_tokenize
@@ -8,27 +8,18 @@ from nltk.corpus import stopwords
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 from pyspark import SparkConf, SparkContext
-from Classifier import Classifier
-from langdetect import detect
+#from langdetect import detect
 #from base import *
 # encoding=utf8  
 
-reload(sys)  
-sys.setdefaultencoding('utf8')
+from pyspark.ml.feature import HashingTF, IDF
+from pyspark.mllib.regression import LabeledPoint
+from pyspark.mllib.linalg import SparseVector
+from pyspark.sql import Row, SQLContext
+from pyspark.sql.functions import col
 
-start = timer()
-
-APP_NAME = 'Recomender System'
-threshold  = 0.1
-numMaxSuggestionsPerPost = 5
-numStarts = 5
-
-############ INICIO BASE
-host = 'localhost'
-port = 27017
-username = ''
-password = ''
-database = 'tcc-recsys-mongo'
+from pyspark.mllib.classification import NaiveBayes, NaiveBayesModel
+from pyspark.mllib.classification import SVMWithSGD, SVMModel
 
 def removeAccents(s):
   s = ''.join((c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn'))
@@ -42,94 +33,27 @@ def findUserById(userId):
     db = createMongoDBConnection(host, port, username, password, database)
     return db.users.find_one({'_id': ObjectId(userId)})
 
-def findPosts(userId):
+def findPosts(user):
     posts = []
-    user = findUserById(userId)
-    for post in user['facebook']['posts']:
-        if 'message' in post.keys():
-            posts.append((post['id_post'], removeAccents(post['message']), u'Post', u'Facebook'))
-    
-    for post in user['twitter']:
-        if 'text' in post.keys():
-            posts.append((post['id'], removeAccents(post['text']), u'Post', u'Twitter'))  
+
+    if user['facebook']['posts'] is not None:
+        for post in user['facebook']['posts']:
+            if 'message' in post.keys():
+                posts.append((post['id_post'], removeAccents(post['message']), u'Post', u'Facebook'))
+
+    if user['twitter'] is not None:
+        for post in user['twitter']:
+            if 'text' in post.keys():
+                posts.append((post['id'], removeAccents(post['text']), u'Post', u'Twitter'))  
 
     return posts
 
+
 def findProductById(prodId):
     db = createMongoDBConnection(host, port, username, password, database)
-    return db.produto.find_one({'_id': ObjectId(prodId)})
-
-def findProductsByCategory(categories):
-    db = createMongoDBConnection(host, port, username, password, database)
-    produtos = db.produto
-    product_list = []
-    query_filter = {}
-    if categories:
-      query_filter = {"categorias" : {"$in" : categories}}
-    
-    print '#### Find products by query {}'.format(query_filter)
-    for produto in produtos.find(query_filter):
-      keys = produto.keys()
-      description = ''
-      if 'descricaoLonga' in keys:
-          description = removeAccents(description + produto['descricaoLonga'])
-      if 'nome' in keys:
-          description = removeAccents(description + produto ['nome'])
-      id = None
-      if '_id' in keys:
-          id = str(produto['_id'])
-      
-      category = ''
-      subcategory = ''
-      if 'categorias' in keys:
-          category = removeAccents(produto['categorias'][0])
-          if(len(produto['categorias']) > 1):
-              subcategory = removeAccents(produto['categorias'][1])
-          
-      product_list.append((id, description, category, subcategory))
-    
-    return product_list
-
-def insertTokensAndCategories(tokens, category, categoryAndSubcategory):
-    db = createMongoDBConnection(host, port, username, password, database)
-
-    modelCollection = db.model
-    modelCollection.remove({'_type':'token'})
-
-    document_mongo =  dict()
-    document_mongo['_type'] = 'token'
-    document_mongo['_datetime'] = datetime.datetime.utcnow()
-    i = 0
-    for t in tokens:
-        document_mongo[t] = i
-        i = i + 1   
-
-    modelCollection.insert_one(document_mongo)
-
-    modelCollection.remove({'_type':'category'})
-
-    document_mongo =  dict()
-    document_mongo['_type'] = 'category'
-    document_mongo['_datetime'] = datetime.datetime.utcnow()
-    i = 0
-    for c in category:
-        document_mongo[c] = i
-        i = i + 1 
-
-    modelCollection.insert_one(document_mongo)
-
-    modelCollection.remove({'_type':'category and subcategory'})
-    
-    document_mongo =  dict()
-    document_mongo['_type'] = 'category and subcategory'
-    document_mongo['_datetime'] = datetime.datetime.utcnow()
-    i = 0
-    for c in categoryAndSubcategory:
-        document_mongo[c[0]+","+c[1]] = i
-        i = i + 1 
-
-    modelCollection.insert_one(document_mongo)
-    
+    prod = db.produto_novo.find_one({'_id': ObjectId(prodId)})
+    prod['idprod'] = str(prod['_id'])
+    return prod
 
 def updateUser(user):
     db = createMongoDBConnection(host, port, username, password, database)
@@ -169,200 +93,154 @@ def getTokensAndCategories():
 
     return tokens_list, categories_list, categories_and_subcategories_list
     
-def tf(tokens):
-    token_dict = dict()   
-    for token in tokens:
-        if token in token_dict:
-            token_dict[token] = token_dict[token] + 1
-        else:
-            token_dict[token] = 1
-            
-    for t in token_dict:
-        token_dict[t] = float(token_dict[t])/float(len(tokens))
-        
-    return token_dict
-
-def idfs(corpus):
-    N = corpus.count()
-    uniqueTokens = corpus.flatMap(lambda doc: set(doc[1]))
-    tokenCountPairTuple = uniqueTokens.map(lambda t: (t, 1))
-    tokenSumPairTuple = tokenCountPairTuple.reduceByKey(lambda a,b: a+b)
-
-    return tokenSumPairTuple.map(lambda (k, v): (k, math.log(1.0*N/v)))    
-
-
-def tfidf(tokens, idfs):
-    tfs = tf(tokens)
-    tfIdfDict = {k: v*idfs[k] for k, v in tfs.items()}
-    return tfIdfDict
-
-def dotprod(a, b):
-    dp=0
-    for k in a:
-        if k in b:
-            dp += a[k] * b[k]
-    return  dp
-
-
-def norm(a):
-    return math.sqrt(dotprod(a, a))
-
-############ FIM BASE
-
-def cosineSimilarity(record, idfsRDD, idfsRDD2, corpusNorms1, corpusNorms2):
-    vect1Rec = record[0][0]
-    vect2Rec = record[0][1]
-    key = (vect1Rec, vect2Rec)
-
-    try:
-        tokens = record[1]
-        s = sum((idfsRDD[vect1Rec][i]*idfsRDD2[vect2Rec][i] for i in tokens))
-        value = s/((corpusNorms1[vect1Rec])*(corpusNorms2[vect2Rec]))
-        return (key, value)
-    except:
-        print "Unexpected error:", sys.exc_info()[0]
-    return (key, 0)
-
-def main(**kwargs):
-    iduser = sys.argv[1]
-
-    user = findUserById(iduser)
-    posts = findPosts(iduser)
-   
-    conf = SparkConf().setAppName(APP_NAME).setMaster("local").set("spark.executor.memory", "1g")
-
-    sc = SparkContext(conf=conf)
-    #for post in posts:
-        #print post
-
-    print 'Generating posts RDD'
-    postsRDD = sc.parallelize(posts)
-    tokens, category, categoryAndSubcategory = getTokensAndCategories()
-    stpwrds = stopwords.words('portuguese')
-
-    print 'Generating product RDD'
-    productRDD = sc.parallelize(findProductsByCategory([]))
-
-    print 'Union posts with product'
-    productAndPostRDD = productRDD.union(postsRDD)
-    
-    print 'Generating corpusRDD'
-    corpusRDD = (productAndPostRDD.map(lambda s: (s[0], word_tokenize(s[1].lower()), s[2], s[3]))
-                           .map(lambda s: (s[0], [PorterStemmer().stem(x) for x in s[1] if x not in stpwrds], s[2], s[3]))
-                           .map(lambda s: (s[0], [x for x in s[1] if x in tokens], s[2], s[3]))
-                           .filter(lambda x: len(x[1]) >= 20 or x[2] == u'Post')
-                           .cache())
-
-    #corpusRDD = productAndPostRDD.map(lambda s: (s[0], word_tokenize(s[1].lower()), s[2], s[3])).map(lambda s: (s[0], [PorterStemmer().stem(x) for x in s[1] if x not in stpwrds], s[2], s[3] )).map(lambda s: (s[0], [x[0] for x in pos_tag(s[1]) if x[1] == 'NN' or x[1] == 'NNP'], s[2], s[3])).cache()
-    print 'Generating idfsRDD'
-    idfsRDD = idfs(corpusRDD)
-    idfsRDDBroadcast = sc.broadcast(idfsRDD.collectAsMap())
-    print 'Generating tdidfRDD'
-    tfidfRDD = corpusRDD.map(lambda x: (x[0], tfidf(x[1], idfsRDDBroadcast.value), x[2], x[3])).cache()
-    
-    tfidfPostsRDD = tfidfRDD.filter(lambda x: x[2]=='Post').cache()
-    tfidfPostsBroadcast = sc.broadcast(tfidfPostsRDD.map(lambda x: (x[0], x[1])).collectAsMap())
-    corpusPostsNormsRDD = tfidfPostsRDD.map(lambda x: (x[0], norm(x[1]))).cache()
-    corpusPostsNormsBroadcast = sc.broadcast(corpusPostsNormsRDD.collectAsMap())
-    
-    print 'Generating Classifier'
-    #classifier = Classifier(sc, 'NaiveBayes')
-    #modelNaiveBayesCategory = classifier.getModel('/dados/models/naivebayes/category_new')
-    #postsSpaceVectorRDD = classifier.createVectSpacePost(tfidfPostsRDD, tokens)
-    #predictions = postsSpaceVectorRDD.map(lambda p: (modelNaiveBayesCategory.predict(p[1]), p[0])).groupByKey().mapValues(list).collect()
-    
-    classifier = Classifier(sc, 'NaiveBayes')
-    modelNaiveBayesSubcategory = classifier.getModel('/dados/models/naivebayes/subcategory_new')
-    postsSpaceVectorRDD = classifier.createVectSpacePost(tfidfPostsRDD, tokens)
-    
-
-    predictions = postsSpaceVectorRDD.map(lambda p: (modelNaiveBayesSubcategory.predict(p[1]), p[0])).groupByKey().mapValues(list).collect()
-
-    #classifier = Classifier(sc, 'DecisionTree')
-    #modelDecisionTree = classifier.getModel('/dados/models/dt/category_new')
-    #postsSpaceVectorRDD = classifier.createVectSpacePost(tfidfPostsRDD, tokens)
-    #predictions = modelDecisionTree.predict(postsSpaceVectorRDD.map(lambda x: x)).collect()
-
-    for prediction in predictions:
-        print '=================================> PREDICTION {}'.format(prediction)
-        category_to_use = categoryAndSubcategory[int(prediction[0])][0]
-        print '=================================> CATEGORY TO USE {}'.format(category_to_use)
-        
-        tfidfProductsCategoryRDD = tfidfRDD.filter(lambda x: x[2]==category_to_use).cache()
-        tfidfProductsCategoryBroadcast = sc.broadcast(tfidfProductsCategoryRDD.map(lambda x: (x[0], x[1])).collectAsMap())
-
-        corpusInvPairsProductsRDD = tfidfProductsCategoryRDD.flatMap(lambda r: ([(x, r[0]) for x in r[1]])).cache()
-        corpusInvPairsPostsRDD = tfidfPostsRDD.flatMap(lambda r: ([(x, r[0]) for x in r[1]])).filter(lambda x: x[1] in prediction[1]).cache()
-        commonTokens = (corpusInvPairsProductsRDD.join(corpusInvPairsPostsRDD)
-                                                 .map(lambda x: (x[1], x[0]))
-                                                 .groupByKey()
-                                                 .cache())
-
-        corpusProductsNormsRDD = tfidfProductsCategoryRDD.map(lambda x: (x[0], norm(x[1]))).cache()
-        corpusProductsNormsBroadcast = sc.broadcast(corpusProductsNormsRDD.collectAsMap())
-
-        print '### PREDICTION Similarities RDD'
-        similaritiesRDD =  (commonTokens
-                            .map(lambda x: cosineSimilarity(x, tfidfProductsCategoryBroadcast.value, tfidfPostsBroadcast.value, corpusProductsNormsBroadcast.value, corpusPostsNormsBroadcast.value))
-                            .cache())
-
-        suggestions = (similaritiesRDD
-                        .map(lambda x: (x[0][1], (x[0][0], x[1])))
-                        .filter(lambda x: x[1][1]>threshold)
-                        .groupByKey()
-                        .mapValues(list)
-                        .join(postsRDD)
-                        .join(postsRDD.map(lambda x: (x[0], x[3])))
-                        .collect())
-
-        if len(suggestions) > 0:
-            insertSuggestions(suggestions, iduser)
-        
-    user['statusRecomendacao'] = u'F'
-    updateUser(user)
-    
-    elap = timer()-start
-    print 'it tooks %d seconds' % elap
-
-
-def insertSuggestions(suggestions, iduser):   
-    
+def insertSuggestions(suggestions, iduser, posts):   
     recomendations = dict()
-    recomendations['recomendacoes'] = []
-
+    recomendations['recomendacoes'] = []    
     for post in suggestions:
-        print len(post)
-        if len(post) > 0:
-            suggestions_dict = dict()
-            product_dict = dict()
 
-            suggestions_dict['resource'] = post[1][1]
-            suggestions_dict['postId'] = post[0]
-            suggestions_dict['post'] = post[1][0][1]          
+        suggestions_dict = dict()
 
-            post[1][0][0].sort(key=lambda x: -x[1])
+        suggestions_dict['postId'] = post[0][0]
+        suggestions_dict['products'] = []
 
-            if len(post[1][0][0]) > 0:
-                maxCosine = max([x[1] for x in post[1][0][0][:numMaxSuggestionsPerPost]])
-                minCosine = 0
-                lenInterval = (maxCosine - minCosine)/numStarts
-                suggestions_dict['products'] = []
-                for product in post[1][0][0][:numMaxSuggestionsPerPost]:
-                    print '###### PRODUCT RECOMMENDATION {} '.format(product)
-                    product_dict = dict()
-                    prod = findProductById(product[0])
-                    if prod:
-                        prod['cosineSimilarity'] = product[1]
-                        prod['rate'] = (product[1]-minCosine)/lenInterval
-                        suggestions_dict['products'].append(prod)
+        for post_base in posts:
+            #isso nao esta funcionando, verificar o pq
+            if int(post_base[0]) == int(post[0][0]):
+                suggestions_dict['post'] = post_base
 
-            recomendations['recomendacoes'].append(suggestions_dict)
+        for product in post:
+            if len(product) > 0:
+                prod = findProductById(product[1])
+                if len(prod) > 0:
+                    prod['cosineSimilarity'] = product[2]
+                    suggestions_dict['products'].append(prod)            
+
+        recomendations['recomendacoes'].append(suggestions_dict)            
 
     db = createMongoDBConnection(host, port, username, password, database)
     db.users.update_one({"_id": ObjectId(iduser)}, {"$set" : recomendations})
-    sys.exit(0)
+
     return True
 
-if __name__ == '__main__':
-    main()
+def cossine(v1, v2):
+    if (v1.dot(v1)*v2.dot(v2)) != 0:
+        return v1.dot(v2)/(v1.dot(v1)*v2.dot(v2))
+    else:
+        return 0
+
+def main(sc, sqlContext):
+
+    #start = timer()
+
+    #print '---Pegando usuario, posts, tokens e categorias do MongoDB---'
+    #start_i = timer()
+    user = findUserById(iduser)
+    posts = findPosts(user) 
     
+    tokens, category, categoryAndSubcategory = getTokensAndCategories()
+    postsRDD = (sc.parallelize(posts).map(lambda s: (s[0], word_tokenize(s[1].lower()), s[2], s[3]))
+                    .map(lambda p: (p[0], [x for x in p[1] if x in tokens] ,p[2], p[3]))
+                    .cache())
+
+    
+
+    #print '####levou %d segundos' % (timer() - start_i)
+
+    #print '---Pegando produtos do MongoDB---'
+    #start_i = timer()
+
+    #print '####levou %d segundos' % (timer() - start_i)
+    
+    #print '---Criando corpusRDD---'
+    #start_i = timer()
+    stpwrds = stopwords.words('portuguese')
+    corpusRDD = (postsRDD.map(lambda s: (s[0], [PorterStemmer().stem(x) for x in s[1] if x not in stpwrds], s[2], s[3]))
+                         .filter(lambda x: len(x[1]) >= 20 or (x[2] == u'Post' and len(x[1])>0))
+                         .cache())
+    #print '####levou %d segundos' % (timer() - start_i)
+
+    #print '---Calculando TF-IDF---'
+    #start_i = timer()
+    wordsData = corpusRDD.map(lambda s: Row(label=int(s[0]), words=s[1], type=s[2]))
+    wordsDataDF = sqlContext.createDataFrame(wordsData).unionAll(sqlContext.read.parquet("/home/ubuntu/recsys-tcc-ml/parquet/wordsDataDF.parquet"))
+
+
+    numTokens = len(tokens)
+    hashingTF = HashingTF(inputCol="words", outputCol="rawFeatures", numFeatures=numTokens)
+    idf = IDF(inputCol="rawFeatures", outputCol="features")
+
+    featurizedData = hashingTF.transform(wordsDataDF)
+
+    idfModel = idf.fit(featurizedData)
+    tfIDF = idfModel.transform(featurizedData).cache()
+
+    postTFIDF = (tfIDF
+                    .filter(tfIDF.type==u'Post')
+                    #.map(lambda s: Row(label=s[0], type=s[1], words=s[2], rawFeatures=s[3], features=s[4], sentiment=SVM.predict(s[4])))
+                    .cache())
+
+    #postTFIDF = postTFIDF.filter(lambda p: p.sentiment == 1)
+    #print '####levou %d segundos' % (timer() - start_i)
+
+    #print '---Carregando modelo---'
+    #start_i = timer()
+    NB = NaiveBayesModel.load(sc, '/home/ubuntu/recsys-tcc-ml/models/naivebayes/modelo_categoria')
+    SVM = SVMModel.load(sc, "/home/ubuntu/recsys-tcc-ml/models/svm")
+    #print '####levou %d segundos' % (timer() - start_i)
+
+    #print '---Usando o modelo---'
+    #start_i = timer()
+    predictions = (postTFIDF
+                        .map(lambda p: (NB.predict(p.features), p[0], SVM.predict(p.features)))
+                        .filter(lambda p: p[2]==1)
+                        .map(lambda p: (p[0], p[1]))
+                        .groupByKey()
+                        .mapValues(list)
+                        .collect())
+
+    #print '####levou %d segundos' % (timer() - start_i)
+    #print '---Calculando similaridades---'
+    #start_i = timer()
+    suggestions = []
+
+    for prediction in predictions:
+        category_to_use = category[int(prediction[0])]
+        #print ' Calculando similaridades para a categoria: {}'.format(category_to_use)
+        tf = tfIDF.filter(tfIDF.type==category_to_use).cache()
+        for post in prediction[1]:
+            postVector = postTFIDF.filter(postTFIDF.label == post).map(lambda x: x.features).collect()[0]
+            sim = (tf
+                    .map(lambda x: (post, x.label, cossine(x.features, postVector)))
+                    .filter(lambda x: x[2]>=threshold)
+                    .collect())
+            if len(sim) > 0:
+                suggestions.append(sim)
+
+    #print '####levou %d segundos' % (timer() - start_i)
+
+    if len(suggestions) > 0:
+        #print '---Inserindo recomendacoes no MongoDB---'
+        #start_i = timer()
+        insertSuggestions(suggestions, iduser, posts)
+        #print '####levou %d segundos' % (timer() - start_i)
+
+if __name__ == '__main__':
+
+    APP_NAME = 'Recomender System - Calculo de recomendacao'
+    threshold  = 0.0002
+    #numMaxSuggestionsPerPost = 5
+    numStarts = 5
+
+    host = 'localhost'
+    port = 27017
+    username = ''
+    password = ''
+    database = 'tcc-recsys-mongo'
+    
+    iduser = sys.argv[1]
+
+    sc = SparkContext(appName=APP_NAME)
+    sqlContext = SQLContext(sc)
+
+    main(sc, sqlContext)
+    sc.stop()
