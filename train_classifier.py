@@ -19,7 +19,7 @@ host = 'localhost'
 port = 27017
 username = ''
 password = ''
-database = 'recsysdb'
+database = 'recsysdb_homologacao'
 
 def removeAccents(s):
   s = ''.join((c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn'))
