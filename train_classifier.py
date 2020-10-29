@@ -11,6 +11,14 @@ from openpyxl import load_workbook
 
 from pyspark import SparkContext
 
+
+#general variables
+#MongoDB
+host = 'localhost'
+port = 27017
+username = ''
+password = ''
+database = 'recsysdb_homologacao'
 from pyspark.ml.feature import HashingTF, IDF
 from pyspark.mllib.regression import LabeledPoint
 from pyspark.mllib.linalg import SparseVector
